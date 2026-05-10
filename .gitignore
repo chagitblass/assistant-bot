@@ -1,0 +1,10 @@
+.env
+verify_todoist.py
+migrate_sheets_to_todoist.py
+*.json
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+test_parser.py
+test_dispatch.py
