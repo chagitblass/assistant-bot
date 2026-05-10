@@ -6,7 +6,7 @@ A personal assistant bot for a busy parent. Manages tasks, a daily plan, and Goo
 
 ## 1. Project Overview
 
-The bot is designed for one user (whitelisted by Telegram chat_id). She sends casual natural language messages; the bot parses them with Claude into structured JSON, then executes deterministic handlers that read/write Google Sheets and Google Calendar.
+The bot supports two Telegram chats (contexts): **couple** (full features — tasks, calendar, schedule) and **private** (tasks only). Each context has its own Todoist project, allowed senders, and enabled intents. Users send casual natural language messages; the bot parses them with Claude into structured JSON, then executes deterministic handlers that read/write Todoist, Google Sheets, and Google Calendar.
 
 **Core capabilities:**
 - Add, query, and mark done tasks (by day or by week)
@@ -25,11 +25,13 @@ The bot is designed for one user (whitelisted by Telegram chat_id). She sends ca
 
 | File | Role |
 |---|---|
-| `main.py` | Flask app. Telegram webhook + polling entry point. Routes messages. Cloud Scheduler HTTP endpoints. |
+| `main.py` | Flask app. Telegram webhook entry point. Routes messages. Scheduler HTTP endpoints (`/daily`, `/weekly`, `/triage`). |
 | `run_polling.py` | Dev-only. Runs the bot in polling mode (no public URL needed). |
+| `context.py` | `Context` dataclass: per-chat config (Todoist project, allowed senders, allowed intents, feature flags). Defines `COUPLE` and `PRIVATE` contexts. |
 | `handlers.py` | One function per intent. Pure business logic. Returns strings or sentinel dicts. No Telegram imports. |
 | `parser.py` | Single call to Claude API. Converts natural language → JSON intent. |
-| `sheets.py` | All Google Sheets reads and writes. No business logic, no Telegram. |
+| `sheets.py` | Google Sheets reads and writes (schedule, calendar config, contacts, weekly notes). No business logic, no Telegram. |
+| `todoist.py` | All Todoist task reads and writes, scoped per `Context`. |
 | `tg.py` | Telegram platform adapter: `parse_inbound`, `send_outbound`, `send_outbound_async`, mark-done session state (`pending_mark_done`). |
 | `calendar_api.py` | All Google Calendar reads and writes. Timezone: `Asia/Jerusalem`. |
 | `scheduler.py` | Proactive message logic: `/daily`, `/weekly`, `/triage`. Sends via `tg.send_outbound()`. |
@@ -338,14 +340,19 @@ Launch the interactive mark-done keyboard.
 | `ANTHROPIC_API_KEY` | From console.anthropic.com |
 | `GOOGLE_SHEETS_ID` | From the Google Sheet URL |
 | `GOOGLE_CALENDAR_ID` | Calendar ID (e.g. your Gmail address for primary calendar) |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | Path to service account JSON file |
-| `WEBHOOK_URL` | Public HTTPS URL of the deployed service (Cloud Run URL) |
-| `SCHEDULER_SECRET` | Shared secret for Cloud Scheduler endpoint auth (optional in dev) |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Path to service account JSON file (or JSON content as string) |
+| `SCHEDULER_SECRET` | Shared secret for scheduler endpoint auth (optional in dev) |
+| `TODOIST_API_TOKEN` | From Todoist developer settings |
+| `TG_CHAT_COUPLE` | Telegram chat ID of the couple group chat |
+| `TG_CHAT_PRIVATE` | Telegram chat ID of the private chat |
+| `TODOIST_PROJECT_COUPLE` | Todoist project ID for the couple context |
+| `TODOIST_PROJECT_PRIVATE` | Todoist project ID for the private context |
+| `COUPLE_USERS` | Comma-separated Telegram user IDs allowed in the couple chat (optional) |
+| `PRIVATE_USERS` | Comma-separated Telegram user IDs allowed in the private chat (optional) |
 
 ### Run locally (polling mode)
 
 ```bash
-cd "/Users/chagit/Assistant Agent"
 pip3 install -r requirements.txt
 set -a && source .env && set +a
 python3 run_polling.py
@@ -360,67 +367,36 @@ python3 setup_sheets.py path/to/service-account.json YOUR_SPREADSHEET_ID
 ```
 
 Then fill in the sheets:
-- `config`: set `telegram_whitelist` to your Telegram chat ID (get it from @userinfobot)
 - `schedule`: add rows for Sunday–Friday with work hours and pickup/dropoff names
-- `contacts`: add your husband and other frequent contacts
+- `contacts`: add frequent contacts (name, email, relationship)
 
-### Deploy to Cloud Run
+### Deploy to Railway
 
-```bash
-PROJECT_ID=your-gcp-project
-SERVICE=assistant-bot
-REGION=us-central1
+The project is deployed on [Railway](https://railway.app). The `Procfile` starts the app via gunicorn:
 
-# Build
-gcloud builds submit --tag gcr.io/$PROJECT_ID/$SERVICE
-
-# Deploy
-gcloud run deploy $SERVICE \
-  --image gcr.io/$PROJECT_ID/$SERVICE \
-  --platform managed \
-  --region $REGION \
-  --allow-unauthenticated \
-  --set-env-vars TELEGRAM_BOT_TOKEN=...,ANTHROPIC_API_KEY=...,GOOGLE_SHEETS_ID=...,\
-GOOGLE_CALENDAR_ID=...,GOOGLE_SERVICE_ACCOUNT_JSON=/secrets/sa.json,\
-SCHEDULER_SECRET=...,WEBHOOK_URL=https://YOUR_SERVICE_URL
-
-# Mount service account as secret
-gcloud secrets create sa-json --data-file=path/to/service-account.json
-gcloud run services update $SERVICE \
-  --update-secrets /secrets/sa.json=sa-json:latest \
-  --region $REGION
 ```
+web: gunicorn main:app --workers 2 --timeout 30
+```
+
+Set all environment variables from the table above in the Railway service dashboard.
 
 ### Register Telegram webhook
 
-The app calls `bot.set_webhook()` on startup automatically when `WEBHOOK_URL` is set. Or manually:
+Run once after deploying to point Telegram at your Railway URL:
 
 ```bash
-curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook?url=https://YOUR_SERVICE_URL/telegram-webhook"
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook?url=https://YOUR_RAILWAY_URL/telegram-webhook"
 ```
 
-### Cloud Scheduler jobs
+### Scheduler cron jobs
 
-```bash
-TZ="Asia/Jerusalem"
-URL="https://YOUR_SERVICE_URL"
-SECRET="YOUR_SECRET"
+The `/daily`, `/weekly`, and `/triage` endpoints are triggered by Railway cron jobs (or any HTTP scheduler). Each POST must include the header `X-Scheduler-Secret: YOUR_SECRET`.
 
-# Daily overview — 07:00 every day
-gcloud scheduler jobs create http daily-summary \
-  --schedule "0 7 * * *" --uri "$URL/daily" \
-  --http-method POST --headers "X-Scheduler-Secret=$SECRET" --time-zone "$TZ"
-
-# Weekly overview — Sunday 07:00
-gcloud scheduler jobs create http weekly-summary \
-  --schedule "0 7 * * 0" --uri "$URL/weekly" \
-  --http-method POST --headers "X-Scheduler-Secret=$SECRET" --time-zone "$TZ"
-
-# Evening triage — 21:00 every day
-gcloud scheduler jobs create http evening-triage \
-  --schedule "0 21 * * *" --uri "$URL/triage" \
-  --http-method POST --headers "X-Scheduler-Secret=$SECRET" --time-zone "$TZ"
-```
+| Endpoint | Schedule | Purpose |
+|---|---|---|
+| `/daily` | `0 7 * * *` (Asia/Jerusalem) | Morning overview |
+| `/weekly` | `0 7 * * 0` (Asia/Jerusalem) | Sunday weekly overview |
+| `/triage` | `0 21 * * *` (Asia/Jerusalem) | Evening task triage |
 
 ---
 
@@ -428,12 +404,11 @@ gcloud scheduler jobs create http evening-triage \
 
 | Feature | Notes |
 |---|---|
-| **Cloud Run deployment** | Code is ready. Dockerfile exists. Not yet deployed and tested end-to-end. |
-| **Cloud Scheduler testing** | Jobs not yet created. `/daily`, `/weekly`, `/triage` endpoints exist but untested in production. |
 | **Subject picker with buttons** | When adding a task without a subject, send an inline keyboard with existing subjects as options. |
 | **Subjects sheet** | Canonical list of subject names for autocomplete/picker. |
 | **parser_log sheet** | Log every parsed intent for debugging and improving the parser prompt. |
 | **Friday triage** | Spec mentioned Friday evening triage for `target_week` tasks. Currently only daily unfinished tasks are triaged. |
+| **Triage inline keyboards** | Evening triage sends task lists but inline keyboard flow (Phase C) is not yet implemented. |
 
 ---
 

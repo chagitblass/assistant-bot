@@ -7,6 +7,7 @@ import os
 
 from flask import Flask, jsonify, request
 
+import config
 import handlers
 import parser as intent_parser
 import scheduler
@@ -101,15 +102,59 @@ async def _handle_message(
 
 
 # ---------------------------------------------------------------------------
-# Callback-query handler — stub until Phase C (inline-button triage)
+# Callback-query handler
 # ---------------------------------------------------------------------------
 
 def on_callback_query(body: dict) -> None:
+    from datetime import date, timedelta
+    from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+
     cq = body.get("callback_query", {})
-    logger.info(
-        "Callback query received (stub): id=%s data=%r",
-        cq.get("id"), cq.get("data"),
-    )
+    data = cq.get("data", "")
+    cq_id = cq.get("id")
+    msg = cq.get("message", {})
+    chat_id = str(msg.get("chat", {}).get("id", ""))
+    message_id = msg.get("message_id")
+    ctx = get_context(chat_id)
+
+    async def _handle() -> None:
+        async with Bot(config.TELEGRAM_BOT_TOKEN) as bot:
+            if data.startswith("triage:done:"):
+                task_id = data[len("triage:done:"):]
+                if ctx:
+                    todoist.mark_task_done(ctx, task_id)
+                current_rows = msg.get("reply_markup", {}).get("inline_keyboard", [])
+                new_rows = [
+                    row for row in current_rows
+                    if not any(btn.get("callback_data") == data for btn in row)
+                ]
+                new_markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(text=btn["text"], callback_data=btn["callback_data"])
+                     for btn in row if "callback_data" in btn]
+                    for row in new_rows
+                ])
+                await bot.edit_message_reply_markup(
+                    chat_id=chat_id, message_id=message_id, reply_markup=new_markup,
+                )
+                await bot.answer_callback_query(cq_id)
+
+            elif data == "triage:snooze_all":
+                if ctx:
+                    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+                    tasks = todoist.query_tasks(ctx, filter="today", include_done=False)
+                    for task in tasks:
+                        todoist.set_task_date(ctx, task["id"], tomorrow)
+                await bot.edit_message_text(
+                    chat_id=chat_id, message_id=message_id,
+                    text="Done for today. Remaining tasks moved to tomorrow.",
+                )
+                await bot.answer_callback_query(cq_id)
+
+            else:
+                logger.info("Unhandled callback query: %r", data)
+                await bot.answer_callback_query(cq_id)
+
+    asyncio.run(_handle())
 
 
 # ---------------------------------------------------------------------------
@@ -170,13 +215,11 @@ def weekly():
 def triage():
     if not _scheduler_auth_ok():
         return jsonify({"error": "forbidden"}), 403
-    # Phase C: redesign with inline buttons. For now: numbered-text prompt.
     tasks = todoist.query_tasks(COUPLE, filter="today", include_done=False)
     if not tasks:
-        tg.send_outbound(COUPLE.telegram_chat_id, "No open tasks today.")
+        tg.send_outbound(COUPLE.telegram_chat_id, "No open tasks today. 🎉")
     else:
-        prompt = tg.start_mark_done(COUPLE.telegram_chat_id, tasks)
-        tg.send_outbound(COUPLE.telegram_chat_id, prompt)
+        tg.send_triage(COUPLE.telegram_chat_id, tasks)
     return jsonify({"ok": True})
 
 

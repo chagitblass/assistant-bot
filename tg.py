@@ -225,3 +225,28 @@ def resolve_mark_done(chat_id: str, reply_text: str) -> list[str] | None:
 
 def clear_mark_done(chat_id: str) -> None:
     pending_mark_done.pop(chat_id, None)
+
+
+# ---------------------------------------------------------------------------
+# Triage inline keyboard
+# ---------------------------------------------------------------------------
+
+def send_triage(chat_id: str, tasks: list[dict]) -> None:
+    """Send the evening triage message with one button per task."""
+    from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+
+    rows = []
+    for task in tasks:
+        label = task["text"] if len(task["text"]) <= 40 else task["text"][:37] + "…"
+        rows.append([InlineKeyboardButton(label, callback_data=f"triage:done:{task['id']}")])
+    rows.append([InlineKeyboardButton("Move rest → tomorrow", callback_data="triage:snooze_all")])
+
+    async def _send() -> None:
+        async with Bot(config.TELEGRAM_BOT_TOKEN) as bot:
+            await bot.send_message(
+                chat_id=chat_id,
+                text="Evening check-in — tap what you finished today:",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
+
+    asyncio.run(_send())
