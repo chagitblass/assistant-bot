@@ -396,7 +396,7 @@ gcloud run services update $SERVICE \
 The app calls `bot.set_webhook()` on startup automatically when `WEBHOOK_URL` is set. Or manually:
 
 ```bash
-curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook?url=https://YOUR_SERVICE_URL/webhook"
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook?url=https://YOUR_SERVICE_URL/telegram-webhook"
 ```
 
 ### Cloud Scheduler jobs
