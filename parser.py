@@ -71,8 +71,12 @@ add_task
   Use null for target_date when the user says "this week" or gives no specific day.
 
 add_today_plan
-  Fields: tasks (array of strings)
-  Use when the user lists multiple things to do today.
+  Fields: tasks (array of {text: string, subject: string|null}),
+          target_date ("today"|"tomorrow"|"this_week"|ISO date|null, default "today")
+  Use whenever the user lists MULTIPLE tasks at once — always prefer this over multiple add_task calls.
+  Each task object has a "text" field and an optional "subject" label (null if none).
+  Default target_date to "today" when the user gives no date context.
+  Extract target_date when specified: "add these for this week" → target_date="this_week".
 
 add_appointment
   Fields: title, start_datetime (ISO datetime|null), end_datetime (ISO datetime|null),
@@ -82,9 +86,10 @@ add_book_reminder
   Fields: appointment_type (string), notes (string|null)
 
 query_tasks
-  Fields: filter ("all"|"today"|"tomorrow"|"this_week"|"next_week"|"subject"|"recent"|"subjects_list"),
+  Fields: filter ("all"|"today"|"tomorrow"|"this_week"|"next_week"|"floating"|"subject"|"recent"|"subjects_list"),
           subject (string|null), include_done (boolean, default true)
-  Set include_done=false for "only active", "what's left", "what's still open".
+  Use filter="floating" when the user asks for tasks with no date, undated tasks, or tasks not yet scheduled.
+  Set include_done=false for "only active", "what's left", "what's still open", "not done yet", "haven't done", "still need to do", "aren't done".
 
 query_day
   Fields: date ("today"|"tomorrow"|ISO date, default "today")
@@ -103,7 +108,12 @@ query_config
 override_schedule
   Fields: day (string), week ("this_week"|"next_week"|ISO date of Monday),
           who_drops_off (string|null), who_picks_up (string|null),
-          work_start (string HH:MM|null), work_end (string HH:MM|null)
+          work_start (string HH:MM|null), work_end (string HH:MM|null),
+          notes (string|null)
+  Use whenever the user mentions a schedule change for a specific day — even if you cannot
+  extract concrete times or names. In that case set the schedule fields to null and put the
+  relevant context in `notes` (e.g. "Wednesday: going to Haifa, leaving early").
+  When specific values ARE present, populate those fields AND optionally add notes for context.
 
 add_weekly_note
   Fields: text (string)
@@ -116,6 +126,15 @@ mark_done_start
   Fields: scope ("today"|"all"|"this_week", default "today")
   Use for interactive mode: "mark tasks done", "I finished some stuff".
   "mark all done" → scope "all". "mark weekly done" → scope "this_week".
+
+reschedule_tasks
+  Fields: scope ("today"|"floating"), target_date ("today"|"tomorrow"|"this_week"|ISO date)
+  Use when the user wants to move EXISTING tasks to a different date — never create new tasks.
+  "move today's tasks to tomorrow" → scope="today", target_date="tomorrow"
+  "put my floating tasks for this week" → scope="floating", target_date="this_week"
+  "reschedule tasks with no date to next week" → scope="floating", target_date=<next Monday ISO>
+  CRITICAL: Never use add_task or add_today_plan when the user is asking to schedule/move/assign
+  existing tasks. Use reschedule_tasks instead.
 
 unknown
   Fields: raw (string), candidates (array, see below)
@@ -145,13 +164,22 @@ Tool call: {"intents": [
 ]}
 
 Input: "today I need to: pick up dry cleaning, call mom, prep dinner"
-Tool call: {"intents": [{"action": "add_today_plan", "tasks": ["pick up dry cleaning", "call mom", "prep dinner"]}]}
+Tool call: {"intents": [{"action": "add_today_plan", "tasks": [{"text": "pick up dry cleaning", "subject": null}, {"text": "call mom", "subject": null}, {"text": "prep dinner", "subject": null}], "target_date": "today"}]}
+
+Input: "add these tasks: choose curtains, TA shabbat - tell miki 12-13 and ask what to bring, TA shabbat - talk to avital"
+Tool call: {"intents": [{"action": "add_today_plan", "tasks": [{"text": "choose curtains", "subject": null}, {"text": "TA shabbat - tell miki 12-13 and ask what to bring", "subject": "TA shabbat"}, {"text": "TA shabbat - talk to avital", "subject": "TA shabbat"}], "target_date": "today"}]}
+
+Input: "add these tasks for this week: buy paint, call contractor, measure windows"
+Tool call: {"intents": [{"action": "add_today_plan", "tasks": [{"text": "buy paint", "subject": null}, {"text": "call contractor", "subject": null}, {"text": "measure windows", "subject": null}], "target_date": "this_week"}]}
 
 Input: "pediatrician for Yael next Tuesday 10am"
 Tool call: {"intents": [{"action": "add_appointment", "title": "pediatrician for Yael", "start_datetime": "2025-01-21T10:00:00", "end_datetime": null, "kids_related": true, "invitees": null, "notes": null}]}
 
 Input: "dentist Tuesday 9-10 with Akiva"
 Tool call: {"intents": [{"action": "add_appointment", "title": "dentist", "start_datetime": "2025-01-21T09:00:00", "end_datetime": "2025-01-21T10:00:00", "kids_related": false, "invitees": ["Akiva"], "notes": null}]}
+
+Input: "on wednesday I'm going to haifa and leaving early in the morning"
+Tool call: {"intents": [{"action": "override_schedule", "day": "Wednesday", "week": "this_week", "who_drops_off": null, "who_picks_up": null, "work_start": null, "work_end": null, "notes": "Wednesday: going to Haifa, leaving early in the morning"}]}
 
 Input: "what do I have today"
 Tool call: {"intents": [{"action": "query_day", "date": "today"}]}
@@ -172,7 +200,19 @@ Input: "maybe add or check — I dunno, something with the gym next week?"
 Tool call: {"intents": [{"action": "unknown", "raw": "maybe add or check — I dunno, something with the gym next week?", "candidates": [
   {"action": "add_task", "params": {"text": "gym", "subject": null, "target_date": null}, "reason": "Could be a task to add for next week"},
   {"action": "query_tasks", "params": {"filter": "next_week", "subject": null, "include_done": true}, "reason": "Could be asking what gym-related tasks exist next week"}
-]}]}\
+]}]}
+
+Input: "what are my tasks with no date"
+Tool call: {"intents": [{"action": "query_tasks", "filter": "floating", "subject": null, "include_done": true}]}
+
+Input: "what tasks aren't done yet"
+Tool call: {"intents": [{"action": "query_tasks", "filter": "all", "subject": null, "include_done": false}]}
+
+Input: "move my tasks for today to tomorrow"
+Tool call: {"intents": [{"action": "reschedule_tasks", "scope": "today", "target_date": "tomorrow"}]}
+
+Input: "put these tasks for this week"
+Tool call: {"intents": [{"action": "reschedule_tasks", "scope": "floating", "target_date": "this_week"}]}\
 """
 
 

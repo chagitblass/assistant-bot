@@ -92,6 +92,8 @@ def _resolve_date(raw: str | None) -> str | None:
         return today.isoformat()
     if raw == "tomorrow":
         return (today + timedelta(days=1)).isoformat()
+    if raw == "this_week":
+        return "this_week"  # handled specially by set_task_date
     return raw  # already ISO
 
 
@@ -123,11 +125,28 @@ def handle_add_task(data: dict, context: Context) -> str:
 
 
 def handle_add_today_plan(data: dict, context: Context) -> str:
-    today = date.today().isoformat()
-    texts: list[str] = data.get("tasks", [])
-    todoist.add_tasks_bulk(context, texts, target_date=today)
-    lines = "\n".join(f"• {t}" for t in texts)
-    return f"Today's plan:\n{lines}"
+    raw_date = data.get("target_date", "today")
+    target_date = _resolve_date(raw_date) if raw_date else date.today().isoformat()
+
+    raw_tasks = data.get("tasks", [])
+    added_lines = []
+    for task in raw_tasks:
+        if isinstance(task, str):
+            text, subject = task, None
+        else:
+            text = task.get("text", "")
+            subject = task.get("subject") or None
+        todoist.add_task(context, text, subject=subject, target_date=target_date)
+        subject_part = f" `[{subject}]`" if subject else ""
+        added_lines.append(f"• {text}{subject_part}")
+
+    if target_date == "this_week":
+        date_label = "this week"
+    elif target_date:
+        date_label = _fmt_date(target_date)
+    else:
+        date_label = "today"
+    return f"Added for {date_label}:\n" + "\n".join(added_lines)
 
 
 def _parse_dt(raw: str | None) -> datetime | None:
@@ -259,7 +278,7 @@ def handle_query_tasks(data: dict, context: Context) -> str:
         "all":      "All tasks",
         "today":    "Today",
         "tomorrow": "Tomorrow",
-        "floating": "Floating tasks",
+        "floating": "Tasks with no date",
         "subject":  f"Subject: {subject}",
         "recent":   "Recent tasks",
     }
@@ -423,8 +442,23 @@ def handle_override_schedule(data: dict, context: Context) -> str:
         "work_start": data.get("work_start") or "",
         "work_end": data.get("work_end") or "",
     }
+
+    notes = data.get("notes") or ""
+
+    if not any(fields.values()):
+        if notes:
+            sheets.add_weekly_note(notes)
+            return f"Noted for {week_label}: _{notes}_\nIf you want to update the actual schedule, let me know who handles drop-off/pick-up and what time."
+        return (
+            f"I see {day} has a different schedule, but I need specifics to update it. "
+            f"What time are you leaving? Who handles drop-off/pick-up?"
+        )
+
     sheets.set_schedule_override(week_start, day, fields)
-    return f"Got it — updated {day}'s routine for {week_label}."
+    if notes:
+        sheets.add_weekly_note(notes)
+    changed = [k.replace("_", " ") for k, v in fields.items() if v]
+    return f"Got it — updated {day}'s routine for {week_label} ({', '.join(changed)})."
 
 
 def handle_query_config(data: dict, context: Context) -> str:
@@ -453,6 +487,29 @@ def handle_query_config(data: dict, context: Context) -> str:
 def handle_add_weekly_note(data: dict, context: Context) -> str:
     note = sheets.add_weekly_note(data["text"])
     return f"Note saved for week of {_fmt_date(note['week_start_date'])}:\n_{note['note']}_"
+
+
+def handle_reschedule_tasks(data: dict, context: Context) -> str:
+    scope = data.get("scope", "floating")
+    target_date = _resolve_date(data.get("target_date"))
+
+    filter_map = {"today": "today", "floating": "floating", "all": "all"}
+    tasks = todoist.query_tasks(context, filter=filter_map.get(scope, "floating"), include_done=False)
+    if not tasks:
+        return "No tasks to move."
+
+    for task in tasks:
+        todoist.set_task_date(context, task["id"], target_date)
+
+    n = len(tasks)
+    if target_date == "this_week":
+        date_label = "this week"
+    elif target_date:
+        date_label = _fmt_date(target_date)
+    else:
+        date_label = "no date"
+    scope_label = {"today": "today's tasks", "floating": "floating tasks", "all": "all tasks"}.get(scope, "tasks")
+    return f"Moved {n} {scope_label} to {date_label}."
 
 
 def handle_mark_done(data: dict, context: Context) -> str:
@@ -499,21 +556,22 @@ def handle_unknown(data: dict, context: Context) -> str:
 # ---------------------------------------------------------------------------
 
 HANDLER_MAP = {
-    "add_task":          handle_add_task,
-    "add_today_plan":    handle_add_today_plan,
-    "add_appointment":   handle_add_appointment,
-    "add_book_reminder": handle_add_book_reminder,
-    "query_tasks":       handle_query_tasks,
-    "query_day":         handle_query_day,
-    "query_calendar":    handle_query_calendar,
-    "query_week":        handle_query_week,
-    "query_config":      handle_query_config,
-    "override_schedule": handle_override_schedule,
-    "add_weekly_note":   handle_add_weekly_note,
-    "mark_done":         handle_mark_done,
-    "mark_done_start":   handle_mark_done_start,
-    "out_of_scope":      handle_out_of_scope,
-    "unknown":           handle_unknown,
+    "add_task":           handle_add_task,
+    "add_today_plan":     handle_add_today_plan,
+    "add_appointment":    handle_add_appointment,
+    "add_book_reminder":  handle_add_book_reminder,
+    "query_tasks":        handle_query_tasks,
+    "query_day":          handle_query_day,
+    "query_calendar":     handle_query_calendar,
+    "query_week":         handle_query_week,
+    "query_config":       handle_query_config,
+    "override_schedule":  handle_override_schedule,
+    "add_weekly_note":    handle_add_weekly_note,
+    "mark_done":          handle_mark_done,
+    "mark_done_start":    handle_mark_done_start,
+    "reschedule_tasks":   handle_reschedule_tasks,
+    "out_of_scope":       handle_out_of_scope,
+    "unknown":            handle_unknown,
 }
 
 # Actions the dispatch always allows regardless of context.allowed_intents.

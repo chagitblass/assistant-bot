@@ -89,12 +89,17 @@ def add_task(
     subject: str | None = None,
     target_date: str | None = None,
 ) -> str:
-    """Add a task to the context's Todoist project. Returns the new task id."""
+    """Add a task to the context's Todoist project. Returns the new task id.
+
+    target_date can be an ISO date string, "this_week", or None for floating.
+    """
     kwargs: dict = {
         "project_id": context.todoist_project_id,
         "labels": [subject] if subject else [],
     }
-    if target_date:
+    if target_date == "this_week":
+        kwargs["due_string"] = "this week"
+    elif target_date:
         kwargs["due_date"] = date.fromisoformat(target_date)
     task = get_client().add_task(text, **kwargs)
     return task.id
@@ -198,8 +203,13 @@ def drop_task(context: Context, task_id: str) -> bool:
 
 
 def set_task_date(context: Context, task_id: str, target_date: str | None) -> bool:
-    """Set or clear the due date on a task. Pass None to make it floating."""
-    if target_date:
+    """Set or clear the due date on a task.
+
+    target_date can be an ISO date string, "this_week" (uses Todoist NLP), or None to make floating.
+    """
+    if target_date == "this_week":
+        get_client().update_task(task_id=task_id, due_string="this week")
+    elif target_date:
         get_client().update_task(task_id=task_id, due_date=date.fromisoformat(target_date))
     else:
         # "no date" is Todoist's NLP token to remove a due date
