@@ -128,11 +128,16 @@ mark_done_start
   "mark all done" → scope "all". "mark weekly done" → scope "this_week".
 
 reschedule_tasks
-  Fields: scope ("today"|"floating"), target_date ("today"|"tomorrow"|"this_week"|ISO date)
+  Fields: scope ("today"|"floating"|"date"), from_date (ISO date|null),
+          target_date ("today"|"tomorrow"|"this_week"|ISO date)
   Use when the user wants to move EXISTING tasks to a different date — never create new tasks.
-  "move today's tasks to tomorrow" → scope="today", target_date="tomorrow"
-  "put my floating tasks for this week" → scope="floating", target_date="this_week"
-  "reschedule tasks with no date to next week" → scope="floating", target_date=<next Monday ISO>
+  Use scope="date" + from_date=ISO when user specifies a source date ("from yesterday", "from May 24").
+  Use scope="today" when user says "today's tasks" with no source date.
+  Use scope="floating" for tasks with no date.
+  "move today's tasks to tomorrow" → scope="today", from_date=null, target_date="tomorrow"
+  "move tasks from yesterday to today" → scope="date", from_date=<yesterday ISO>, target_date="today"
+  "move tasks from may 24 to may 25" → scope="date", from_date="2026-05-24", target_date="2026-05-25"
+  "put my floating tasks for this week" → scope="floating", from_date=null, target_date="this_week"
   CRITICAL: Never use add_task or add_today_plan when the user is asking to schedule/move/assign
   existing tasks. Use reschedule_tasks instead.
 
@@ -209,10 +214,16 @@ Input: "what tasks aren't done yet"
 Tool call: {"intents": [{"action": "query_tasks", "filter": "all", "subject": null, "include_done": false}]}
 
 Input: "move my tasks for today to tomorrow"
-Tool call: {"intents": [{"action": "reschedule_tasks", "scope": "today", "target_date": "tomorrow"}]}
+Tool call: {"intents": [{"action": "reschedule_tasks", "scope": "today", "from_date": null, "target_date": "tomorrow"}]}
+
+Input: "move tasks from yesterday to today"
+Tool call: {"intents": [{"action": "reschedule_tasks", "scope": "date", "from_date": "<yesterday-ISO>", "target_date": "today"}]}
+
+Input: "move tasks from may 24 to may 25"
+Tool call: {"intents": [{"action": "reschedule_tasks", "scope": "date", "from_date": "2026-05-24", "target_date": "2026-05-25"}]}
 
 Input: "put these tasks for this week"
-Tool call: {"intents": [{"action": "reschedule_tasks", "scope": "floating", "target_date": "this_week"}]}\
+Tool call: {"intents": [{"action": "reschedule_tasks", "scope": "floating", "from_date": null, "target_date": "this_week"}]}\
 """
 
 

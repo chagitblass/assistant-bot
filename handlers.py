@@ -491,10 +491,18 @@ def handle_add_weekly_note(data: dict, context: Context) -> str:
 
 def handle_reschedule_tasks(data: dict, context: Context) -> str:
     scope = data.get("scope", "floating")
+    from_date = _resolve_date(data.get("from_date"))
     target_date = _resolve_date(data.get("target_date"))
 
-    filter_map = {"today": "today", "floating": "floating", "all": "all"}
-    tasks = todoist.query_tasks(context, filter=filter_map.get(scope, "floating"), include_done=False)
+    if scope == "date" and from_date:
+        all_tasks = todoist.query_tasks(context, filter="all", include_done=False)
+        tasks = [t for t in all_tasks if t.get("target_date") == from_date]
+        scope_label = f"tasks from {_fmt_date(from_date)}"
+    else:
+        filter_map = {"today": "today", "floating": "floating", "all": "all"}
+        tasks = todoist.query_tasks(context, filter=filter_map.get(scope, "floating"), include_done=False)
+        scope_label = {"today": "today's tasks", "floating": "floating tasks", "all": "all tasks"}.get(scope, "tasks")
+
     if not tasks:
         return "No tasks to move."
 
@@ -508,7 +516,6 @@ def handle_reschedule_tasks(data: dict, context: Context) -> str:
         date_label = _fmt_date(target_date)
     else:
         date_label = "no date"
-    scope_label = {"today": "today's tasks", "floating": "floating tasks", "all": "all tasks"}.get(scope, "tasks")
     return f"Moved {n} {scope_label} to {date_label}."
 
 
