@@ -27,7 +27,17 @@ def _get_service():
 
 
 def _calendar_id() -> str:
+    """Primary calendar — used for reads AND writes."""
     return config.GOOGLE_CALENDAR_ID
+
+
+def _all_calendar_ids() -> list[str]:
+    """All calendar IDs to read from (primary + any configured extras)."""
+    ids = [config.GOOGLE_CALENDAR_ID]
+    for extra in (config.GOOGLE_CALENDAR_ID_2, config.GOOGLE_CALENDAR_ID_3):
+        if extra and extra not in ids:
+            ids.append(extra)
+    return ids
 
 
 def create_event(
@@ -76,39 +86,46 @@ def create_event(
 def get_events_for_day(day: date) -> list[dict]:
     start = datetime(day.year, day.month, day.day, 0, 0, 0, tzinfo=TZ).isoformat()
     end = datetime(day.year, day.month, day.day, 23, 59, 59, tzinfo=TZ).isoformat()
-    return _query_events(start, end)
+    return _query_all_calendars(start, end)
 
 
 def get_events_for_week(week_start: date) -> list[dict]:
     start = datetime(week_start.year, week_start.month, week_start.day, 0, 0, 0, tzinfo=TZ).isoformat()
     week_end = week_start + timedelta(days=7)
     end = datetime(week_end.year, week_end.month, week_end.day, 0, 0, 0, tzinfo=TZ).isoformat()
-    return _query_events(start, end)
+    return _query_all_calendars(start, end)
 
 
 def get_upcoming_events(n: int = 10) -> list[dict]:
     now = datetime.now(tz=TZ).isoformat()
+    all_events: list[dict] = []
+    for cal_id in _all_calendar_ids():
+        try:
+            result = (
+                _get_service()
+                .events()
+                .list(
+                    calendarId=cal_id,
+                    timeMin=now,
+                    maxResults=n,
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
+            )
+            all_events.extend(result.get("items", []))
+        except Exception:
+            pass
+    return sorted(all_events, key=_event_sort_key)[:n]
+
+
+def _query_events(time_min: str, time_max: str, calendar_id: str | None = None) -> list[dict]:
+    """Query a single calendar. Uses primary calendar if calendar_id is omitted."""
     result = (
         _get_service()
         .events()
         .list(
-            calendarId=_calendar_id(),
-            timeMin=now,
-            maxResults=n,
-            singleEvents=True,
-            orderBy="startTime",
-        )
-        .execute()
-    )
-    return result.get("items", [])
-
-
-def _query_events(time_min: str, time_max: str) -> list[dict]:
-    result = (
-        _get_service()
-        .events()
-        .list(
-            calendarId=_calendar_id(),
+            calendarId=calendar_id or _calendar_id(),
             timeMin=time_min,
             timeMax=time_max,
             singleEvents=True,
@@ -117,6 +134,17 @@ def _query_events(time_min: str, time_max: str) -> list[dict]:
         .execute()
     )
     return result.get("items", [])
+
+
+def _query_all_calendars(time_min: str, time_max: str) -> list[dict]:
+    """Query all configured calendars and return merged, time-sorted events."""
+    all_events: list[dict] = []
+    for cal_id in _all_calendar_ids():
+        try:
+            all_events.extend(_query_events(time_min, time_max, cal_id))
+        except Exception:
+            pass
+    return sorted(all_events, key=_event_sort_key)
 
 
 _WORK_KEYWORDS = {"work", "interview", "meeting", "zoom", "call", "sync", "standup", "1:1", "presentation", "conference"}

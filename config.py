@@ -6,6 +6,9 @@ TELEGRAM_BOT_TOKEN          = os.environ["TELEGRAM_BOT_TOKEN"]
 ANTHROPIC_API_KEY           = os.environ["ANTHROPIC_API_KEY"]
 GOOGLE_SHEETS_ID            = os.environ["GOOGLE_SHEETS_ID"]
 GOOGLE_CALENDAR_ID          = os.environ["GOOGLE_CALENDAR_ID"]
+# Optional extra read-only calendars (comma-separated, or individual vars)
+GOOGLE_CALENDAR_ID_2        = os.environ.get("GOOGLE_CALENDAR_ID_2", "").strip()
+GOOGLE_CALENDAR_ID_3        = os.environ.get("GOOGLE_CALENDAR_ID_3", "").strip()
 # Production: full JSON string. Local dev: file path (auto-detected below).
 GOOGLE_SERVICE_ACCOUNT_JSON = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
 
