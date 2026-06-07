@@ -238,10 +238,16 @@ def debug_cal():
     import config as cfg
     import calendar_api
     from datetime import date
+    raw_2 = os.environ.get("GOOGLE_CALENDAR_ID_2", "__MISSING__")
+    raw_3 = os.environ.get("GOOGLE_CALENDAR_ID_3", "__MISSING__")
     result = {
         "cal_id_1": cfg.GOOGLE_CALENDAR_ID,
         "cal_id_2": cfg.GOOGLE_CALENDAR_ID_2 or "(not set)",
         "cal_id_3": cfg.GOOGLE_CALENDAR_ID_3 or "(not set)",
+        "raw_env_2": raw_2,
+        "raw_env_2_len": len(raw_2),
+        "raw_env_3": raw_3,
+        "raw_env_3_len": len(raw_3),
         "all_ids": calendar_api._all_calendar_ids(),
         "events_today": [],
         "errors": [],
