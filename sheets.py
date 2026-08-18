@@ -66,6 +66,28 @@ def get_husband_email() -> str | None:
     return None
 
 
+def get_config_value(key: str, default: str = "") -> str:
+    rows = _ws("config").get_all_records()
+    for row in rows:
+        if row.get("key") == key:
+            return str(row.get("value", default))
+    return default
+
+
+def set_config_value(key: str, value: str) -> None:
+    ws = _ws("config")
+    rows = ws.get_all_records()
+    headers = ws.row_values(1)
+
+    for i, row in enumerate(rows):
+        if row.get("key") == key:
+            row_idx = i + 2  # 1-indexed + header
+            ws.update_cell(row_idx, headers.index("value") + 1, value)
+            return
+
+    ws.append_row([key, value], value_input_option="USER_ENTERED")
+
+
 # ---------------------------------------------------------------------------
 # Schedule sheet
 # ---------------------------------------------------------------------------

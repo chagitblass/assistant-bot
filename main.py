@@ -11,6 +11,7 @@ import config
 import handlers
 import parser as intent_parser
 import scheduler
+import sheets
 import tg
 import todoist
 from context import COUPLE, get_context
@@ -19,6 +20,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+ACTIVATE_PHRASE = "activate"
+
+
+def _bot_active() -> bool:
+    return sheets.get_config_value("bot_active", "true").strip().lower() != "false"
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +50,12 @@ async def _handle_message(
 
     if sender_id not in ctx.allowed_senders:
         logger.warning("Rejected sender %s in chat %s", sender_id, chat_id)
+        return
+
+    if not _bot_active():
+        if text.strip().lower() == ACTIVATE_PHRASE:
+            sheets.set_config_value("bot_active", "true")
+            await tg.send_outbound_async(chat_id, "Reactivated. ✅")
         return
 
     if tg.is_duplicate(message_id):
@@ -199,6 +212,8 @@ def _scheduler_auth_ok() -> bool:
 def daily():
     if not _scheduler_auth_ok():
         return jsonify({"error": "forbidden"}), 403
+    if not _bot_active():
+        return jsonify({"ok": True, "skipped": "inactive"})
     scheduler.run_daily(COUPLE)
     return jsonify({"ok": True})
 
@@ -207,6 +222,8 @@ def daily():
 def weekly():
     if not _scheduler_auth_ok():
         return jsonify({"error": "forbidden"}), 403
+    if not _bot_active():
+        return jsonify({"ok": True, "skipped": "inactive"})
     scheduler.run_weekly(COUPLE)
     return jsonify({"ok": True})
 
@@ -215,6 +232,8 @@ def weekly():
 def triage():
     if not _scheduler_auth_ok():
         return jsonify({"error": "forbidden"}), 403
+    if not _bot_active():
+        return jsonify({"ok": True, "skipped": "inactive"})
     tasks = todoist.query_tasks(COUPLE, filter="today", include_done=False)
     if not tasks:
         tg.send_outbound(COUPLE.telegram_chat_id, "No open tasks today. 🎉")
